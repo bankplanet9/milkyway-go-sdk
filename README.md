@@ -1,5 +1,9 @@
 # MilkyWay Payments Go SDK
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/bankplanet9/milkyway-go-sdk.svg)](https://pkg.go.dev/github.com/bankplanet9/milkyway-go-sdk)
+[![CI](https://github.com/bankplanet9/milkyway-go-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/bankplanet9/milkyway-go-sdk/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A production-ready Go client for the [MilkyWay](https://planet9.ae) Payments API
 (`/payments/v1`). It handles Keycloak client-credentials auth, transient-failure
 retries, decimal-exact money, typed errors, and completion polling.
