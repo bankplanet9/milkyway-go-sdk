@@ -84,6 +84,8 @@ func main() {
 
 | Method | Description |
 | --- | --- |
+| `Discover(ctx, country)` | List destination banks and their payout services; empty `country` lists all. |
+| `ServiceSchema(ctx, thirdPartyID, serviceID)` | Raw Draft-2020 JSON Schema for a service's `Data` field. |
 | `Healthcheck(ctx, thirdPartyID, serviceID)` | Recipient service status string. |
 | `Precheck(ctx, PrecheckRequest)` | Quote a payment (rate + commission), no side effects. |
 | `Pay(ctx, PayRequest, idempotencyKey)` | Initiate a payment; returns the transaction id. |
@@ -98,6 +100,32 @@ Use `status.IsTerminal()` to decide whether to stop polling.
 Money fields use `decimal.Decimal`. The SDK sets
 `decimal.MarshalJSONWithoutQuotes = true` in its `init()` so amounts serialize as
 JSON numbers, matching the API wire format.
+
+## Discovery
+
+Before quoting a payment you can discover which destination banks are reachable
+and what each one supports. `Discover` returns the catalog (optionally filtered by
+ISO 3166-1 alpha-2 country); `ServiceSchema` returns the raw JSON Schema that a
+payment's `Data` field must satisfy for a given bank + service.
+
+```go
+dests, err := client.Discover(ctx, "TJ") // "" lists all countries
+if err != nil {
+	log.Fatal(err)
+}
+for _, d := range dests {
+	log.Printf("%s (%s): %d services", d.PartnerName, d.ThirdPartyID, len(d.Services))
+	for _, s := range d.Services {
+		log.Printf("  %s via %s, currencies %v", s.ServiceID, s.PayoutMethod, s.PayoutCurrencies)
+	}
+}
+
+schema, err := client.ServiceSchema(ctx, "recipient-bank", "card-payout")
+if err != nil {
+	log.Fatal(err)
+}
+log.Printf("data schema: %s", schema) // raw json.RawMessage (Draft-2020 JSON Schema)
+```
 
 ## Errors
 
