@@ -363,6 +363,104 @@ func TestCancel(t *testing.T) {
 	}
 }
 
+func TestDiscoverWithoutFilter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/payments/v1/discovery" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if r.URL.RawQuery != "" {
+			t.Errorf("expected no query, got %q", r.URL.RawQuery)
+		}
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			t.Errorf("missing bearer: %q", r.Header.Get("Authorization"))
+		}
+		fmt.Fprint(w, `{"destinations":[{"third_party_id":"bankA","partner_name":"Bank A","country":"TJ","services":[{"service_id":"card-payout","payout_method":"card","recipient":"Card","payout_currencies":["USD","TJS"]}]}]}`)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, nil)
+	dests, err := c.Discover(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dests) != 1 {
+		t.Fatalf("destinations = %d (want 1)", len(dests))
+	}
+	d := dests[0]
+	if d.ThirdPartyID != "bankA" || d.PartnerName != "Bank A" || d.Country != "TJ" {
+		t.Errorf("destination = %+v", d)
+	}
+	if len(d.Services) != 1 {
+		t.Fatalf("services = %d (want 1)", len(d.Services))
+	}
+	svc := d.Services[0]
+	if svc.ServiceID != "card-payout" || svc.PayoutMethod != "card" || svc.Recipient != "Card" {
+		t.Errorf("service = %+v", svc)
+	}
+	if len(svc.PayoutCurrencies) != 2 || svc.PayoutCurrencies[0] != "USD" || svc.PayoutCurrencies[1] != "TJS" {
+		t.Errorf("payout_currencies = %v", svc.PayoutCurrencies)
+	}
+}
+
+func TestDiscoverWithCountryFilter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("country"); got != "TJ" {
+			t.Errorf("country = %q", got)
+		}
+		fmt.Fprint(w, `{"destinations":[]}`)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, nil)
+	dests, err := c.Discover(context.Background(), "TJ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dests) != 0 {
+		t.Fatalf("destinations = %d (want 0)", len(dests))
+	}
+}
+
+func TestServiceSchema(t *testing.T) {
+	const schema = `{"type":"object","properties":{"card_number":{"type":"string"}},"required":["card_number"]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.RequestURI != "/payments/v1/discovery/bank%2FA/card%20payout/schema" {
+			t.Errorf("request uri = %q", r.RequestURI)
+		}
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			t.Errorf("missing bearer: %q", r.Header.Get("Authorization"))
+		}
+		fmt.Fprint(w, schema)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, nil)
+	raw, err := c.ServiceSchema(context.Background(), "bank/A", "card payout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got, want map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal returned schema: %v", err)
+	}
+	if err := json.Unmarshal([]byte(schema), &want); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("schema = %s", raw)
+	}
+}
+
+func TestServiceSchemaValidatesArgs(t *testing.T) {
+	c := newTestClient(t, "http://unused", nil)
+	if _, err := c.ServiceSchema(context.Background(), "", "svc"); err == nil {
+		t.Error("expected error for empty thirdPartyID")
+	}
+	if _, err := c.ServiceSchema(context.Background(), "tp", ""); err == nil {
+		t.Error("expected error for empty serviceID")
+	}
+}
+
 func TestParseError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `not json`)

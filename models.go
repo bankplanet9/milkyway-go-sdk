@@ -124,6 +124,37 @@ type PostcheckResult struct {
 	Error string `json:"error,omitempty"`
 }
 
+// ServiceCapability describes one payout service a destination bank offers. The
+// service's data-field JSON Schema is exposed separately via Client.ServiceSchema
+// and is omitted from the discovery listing.
+type ServiceCapability struct {
+	// ServiceID is the service id to pass to Precheck/Pay (e.g. card-payout).
+	ServiceID string `json:"service_id"`
+	// PayoutMethod is the payout channel (e.g. card, wallet, bank-account).
+	PayoutMethod string `json:"payout_method"`
+	// Recipient is a human-readable recipient descriptor for the service, when provided.
+	Recipient string `json:"recipient,omitempty"`
+	// PayoutCurrencies are the currencies (ISO-4217) the service can pay out in, when provided.
+	PayoutCurrencies []string `json:"payout_currencies,omitempty"`
+}
+
+// Destination is a partner bank you can pay to, together with the services it offers.
+type Destination struct {
+	// ThirdPartyID is the recipient bank id — pass it as ThirdPartyIDDebit to Precheck/Pay.
+	ThirdPartyID string `json:"third_party_id"`
+	// PartnerName is the bank's display name, when provided.
+	PartnerName string `json:"partner_name,omitempty"`
+	// Country is the bank's ISO 3166-1 alpha-2 country code, when provided.
+	Country string `json:"country,omitempty"`
+	// Services are the payout services this destination offers.
+	Services []ServiceCapability `json:"services"`
+}
+
+// discoveryResponse is the wire envelope of a Discover call.
+type discoveryResponse struct {
+	Destinations []Destination `json:"destinations"`
+}
+
 // payResponse is the wire response of a successful Pay call.
 type payResponse struct {
 	TransactionID int64 `json:"transaction_id"`

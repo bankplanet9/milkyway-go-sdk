@@ -103,6 +103,48 @@ func (c *Client) Healthcheck(ctx context.Context, thirdPartyID, serviceID string
 	return string(body), nil
 }
 
+// Discover lists the destination banks you can pay to, each with its payout
+// services. Pass a non-empty country (ISO 3166-1 alpha-2, case-insensitive) to
+// filter by destination country; pass "" to list all destinations.
+func (c *Client) Discover(ctx context.Context, country string) ([]Destination, error) {
+	uri := paymentsPath + "/discovery"
+	if country != "" {
+		q := url.Values{}
+		q.Set("country", country)
+		uri += "?" + q.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+uri, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out discoveryResponse
+	if err := c.sendForJSON(req, &out); err != nil {
+		return nil, err
+	}
+	return out.Destinations, nil
+}
+
+// ServiceSchema returns the raw Draft-2020 JSON Schema that a payment's Data field
+// must satisfy for the given destination bank and service.
+func (c *Client) ServiceSchema(ctx context.Context, thirdPartyID, serviceID string) (json.RawMessage, error) {
+	if thirdPartyID == "" {
+		return nil, errors.New("milkyway: thirdPartyID is required")
+	}
+	if serviceID == "" {
+		return nil, errors.New("milkyway: serviceID is required")
+	}
+	uri := paymentsPath + "/discovery/" + url.PathEscape(thirdPartyID) + "/" + url.PathEscape(serviceID) + "/schema"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+uri, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out json.RawMessage
+	if err := c.sendForJSON(req, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Precheck returns a payment quote (rate + commission) without creating a payment.
 func (c *Client) Precheck(ctx context.Context, req PrecheckRequest) (*PrecheckResult, error) {
 	httpReq, err := c.buildJSONPost(ctx, paymentsPath+"/precheck", req)
