@@ -308,28 +308,31 @@ func (c *Client) sendForJSON(req *http.Request, out any) error {
 
 // toError maps a non-2xx response to a classified *APIError.
 func toError(status int, body []byte) error {
-	msg := extractErrorMessage(body)
+	msg, field := extractErrorMessage(body)
 	if msg == "" {
 		msg = "request failed with status " + strconv.Itoa(status)
 	}
-	return newAPIError(status, msg, string(body), nil)
+	apiErr := newAPIError(status, msg, string(body), nil)
+	apiErr.Field = field
+	return apiErr
 }
 
-// extractErrorMessage pulls the JSON {"error": "..."} message, falling back to a
-// trimmed non-JSON body (e.g. a plain-text 500 from healthcheck).
-func extractErrorMessage(body []byte) string {
+// extractErrorMessage pulls the JSON {"error": "...", "field": "..."} message and
+// field, falling back to a trimmed non-JSON body (e.g. a plain-text 500 from
+// healthcheck) as the message.
+func extractErrorMessage(body []byte) (message, field string) {
 	if len(bytes.TrimSpace(body)) == 0 {
-		return ""
+		return "", ""
 	}
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(body, &obj); err != nil {
-		return strings.TrimSpace(string(body))
+		return strings.TrimSpace(string(body)), ""
 	}
 	if raw, ok := obj["error"]; ok {
-		var s string
-		if json.Unmarshal(raw, &s) == nil {
-			return s
-		}
+		_ = json.Unmarshal(raw, &message)
 	}
-	return ""
+	if raw, ok := obj["field"]; ok {
+		_ = json.Unmarshal(raw, &field)
+	}
+	return message, field
 }

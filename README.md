@@ -48,12 +48,28 @@ func main() {
 
 	ctx := context.Background()
 
+	// The payer and the beneficiary, in the canonical model. Discovery's
+	// PartyProfile says which fields the recipient bank requires.
+	sender := &milkyway.PartyInfo{
+		PartyType:              milkyway.PartyTypeNatural,
+		Name:                   milkyway.PartyName{First: "Ivan", Last: "Petrov", Full: "Petrov Ivan Sergeevich"},
+		DateOfBirth:            "1990-04-18",
+		IdentityDocumentType:   milkyway.IdentityDocumentPassport,
+		IdentityDocumentNumber: "AB1234567",
+	}
+	recipient := &milkyway.PartyInfo{
+		PartyType: milkyway.PartyTypeNatural,
+		Name:      milkyway.PartyName{Full: "Karimov Ali"},
+	}
+
 	quote, err := client.Precheck(ctx, milkyway.PrecheckRequest{
 		ThirdPartyIDDebit: "recipient-bank",
 		ServiceID:         "card-payout",
 		RecipientID:       "rcpt-1",
 		AmountCredit:      decimal.RequireFromString("100.00"),
 		CurrencyCredit:    "USD",
+		SenderInfo:        sender,
+		RecipientInfo:     recipient,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -67,6 +83,8 @@ func main() {
 		RecipientID:       "rcpt-1",
 		AmountCredit:      decimal.RequireFromString("100.00"),
 		CurrencyCredit:    "USD",
+		SenderInfo:        sender,
+		RecipientInfo:     recipient,
 	}, "order-42") // idempotency key (optional)
 	if err != nil {
 		log.Fatal(err)
@@ -85,7 +103,7 @@ func main() {
 | Method | Description |
 | --- | --- |
 | `Discover(ctx, country)` | List destination banks and their payout services; empty `country` lists all. |
-| `ServiceSchema(ctx, thirdPartyID, serviceID)` | Raw Draft-2020 JSON Schema for a service's `Data` field. |
+| `ServiceSchema(ctx, thirdPartyID, serviceID)` | Raw Draft-2020 JSON Schema for a service's non-identity `Data` extras. |
 | `Healthcheck(ctx, thirdPartyID, serviceID)` | Recipient service status string. |
 | `Precheck(ctx, PrecheckRequest)` | Quote a payment (rate + commission), no side effects. |
 | `Pay(ctx, PayRequest, idempotencyKey)` | Initiate a payment; returns the transaction id. |
@@ -105,8 +123,10 @@ JSON numbers, matching the API wire format.
 
 Before quoting a payment you can discover which destination banks are reachable
 and what each one supports. `Discover` returns the catalog (optionally filtered by
-ISO 3166-1 alpha-2 country); `ServiceSchema` returns the raw JSON Schema that a
-payment's `Data` field must satisfy for a given bank + service.
+ISO 3166-1 alpha-2 country). Each service's `PartyProfile` says which `SenderInfo`
+/ `RecipientInfo` fields its recipient bank requires and accepts (see
+[Payer and beneficiary](#payer-and-beneficiary)). `ServiceSchema` returns the raw
+JSON Schema of a service's non-identity `Data` extras — most services take none.
 
 ```go
 dests, err := client.Discover(ctx, "TJ") // "" lists all countries
@@ -117,6 +137,9 @@ for _, d := range dests {
 	log.Printf("%s (%s): %d services", d.PartnerName, d.ThirdPartyID, len(d.Services))
 	for _, s := range d.Services {
 		log.Printf("  %s via %s, currencies %v", s.ServiceID, s.PayoutMethod, s.PayoutCurrencies)
+		if p := s.PartyProfile; p != nil && p.SenderInfo != nil {
+			log.Printf("  sender needs %v (documents: %v)", p.SenderInfo.Required, p.SenderInfo.IdentityDocumentTypes)
+		}
 	}
 }
 
@@ -127,10 +150,48 @@ if err != nil {
 log.Printf("data schema: %s", schema) // raw json.RawMessage (Draft-2020 JSON Schema)
 ```
 
+## Payer and beneficiary
+
+The identity of your customer (the payer) and of the beneficiary travels in
+`SenderInfo` and `RecipientInfo` on `PrecheckRequest` and `PayRequest` — two
+`*PartyInfo` values in one canonical model (FATF Travel Rule / ISO 20022 /
+IVMS101), the same for every recipient bank and service. You map your customer
+data to it once; each bank's connector converts it to that bank's own format. The
+account, card or phone stays in `SenderID` / `RecipientID`.
+
+| Field | Format |
+| --- | --- |
+| `PartyType` | `PartyTypeNatural` (required). `PartyTypeLegal` exists in the model but the API refuses it for now. |
+| `Name.First`, `Name.Last`, `Name.Full` | Text. `Full` is the name as in the document, family name first, with a patronymic if any. |
+| `DateOfBirth` | ISO 8601 date, `YYYY-MM-DD`. |
+| `IdentityDocumentType` | `IdentityDocumentPassport`, `...NationalID`, `...DriverLicense`, `...ResidencePermit`, `...TaxID`, `...SocialSecurity`, `...Other`. Required with `IdentityDocumentNumber`. |
+| `IdentityDocumentNumber` | Series and number together, as in the document. |
+| `IdentityDocumentCountry`, `CountryOfResidence` | ISO 3166-1 alpha-2, upper case (`TJ`). |
+| `Address` | `Country` (alpha-2, required when an address is sent), `City`, `Street`, `Building`, `PostalCode`, and `Line` — up to 7 free-text lines. |
+
+Every field except `PartyType` is optional; empty fields (and an empty `Name` or
+`Address`) are left out of the request. Text values are at most 256 characters.
+
+Which fields a service needs is set by its recipient bank and published as
+`ServiceCapability.PartyProfile` by `Discover`: `Required` and `Accepted` field
+paths (`PartyFieldNameFirst`, `PartyFieldDateOfBirth`, …) for each side, and, when
+the bank takes only some document kinds, `IdentityDocumentTypes`. Send the fields
+you have; fields the bank does not use are ignored. A missing required field, an
+invalid value or an unknown key is refused with `400`, and `APIError.Field` names
+it by its path (e.g. `sender_info.date_of_birth`).
+
+**Never put identity in `Data`** (no sender name, birthday, passport or document
+number there) — the API does not read it from `Data`. `Data` carries only a
+service's non-identity extras; `ServiceSchema` lists them. The browsable registry
+of banks, services, party profiles and `Data` fields is the
+[MilkyWay Handbook](https://docs.planet9.ae/site/milkyway-handbook/en/) (section
+**Services**).
+
 ## Errors
 
 Every non-2xx response becomes an `*APIError` carrying `StatusCode`, `Message`
-(the server's `error` field), and the raw `ResponseBody`. Classify it with
+(the server's `error` field), `Field` (the request field at fault, when the server
+names one), and the raw `ResponseBody`. Classify it with
 `errors.Is` against the sentinels, or unwrap with `errors.As`:
 
 ```go
@@ -148,6 +209,9 @@ if errors.As(err, &apiErr) {
 	log.Printf("status %d: %s", apiErr.StatusCode, apiErr.Message)
 }
 ```
+
+On a field-level `400`, `APIError.Field` names the request field at fault —
+`amount_credit`, or a party field by its path such as `sender_info.date_of_birth`.
 
 ## Retries & idempotency
 

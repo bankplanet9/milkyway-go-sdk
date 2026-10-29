@@ -24,6 +24,20 @@ func Example() {
 
 	ctx := context.Background()
 
+	// The payer and the beneficiary. The service's PartyProfile from Discover says
+	// which fields its recipient bank requires; identity never goes in Data.
+	sender := &milkyway.PartyInfo{
+		PartyType:              milkyway.PartyTypeNatural,
+		Name:                   milkyway.PartyName{First: "Ivan", Last: "Petrov", Full: "Petrov Ivan Sergeevich"},
+		DateOfBirth:            "1990-04-18",
+		IdentityDocumentType:   milkyway.IdentityDocumentPassport,
+		IdentityDocumentNumber: "AB1234567",
+	}
+	recipient := &milkyway.PartyInfo{
+		PartyType: milkyway.PartyTypeNatural,
+		Name:      milkyway.PartyName{Full: "Karimov Ali"},
+	}
+
 	// Quote a payment.
 	quote, err := client.Precheck(ctx, milkyway.PrecheckRequest{
 		ThirdPartyIDDebit: "recipient-bank",
@@ -31,6 +45,8 @@ func Example() {
 		RecipientID:       "rcpt-1",
 		AmountCredit:      decimal.RequireFromString("100.00"),
 		CurrencyCredit:    "USD",
+		SenderInfo:        sender,
+		RecipientInfo:     recipient,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -45,6 +61,8 @@ func Example() {
 		RecipientID:       "rcpt-1",
 		AmountCredit:      decimal.RequireFromString("100.00"),
 		CurrencyCredit:    "USD",
+		SenderInfo:        sender,
+		RecipientInfo:     recipient,
 	}, "order-42")
 	if err != nil {
 		var apiErr *milkyway.APIError
