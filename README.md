@@ -11,7 +11,7 @@ retries, decimal-exact money, typed errors, and completion polling.
 - **Auth** — Keycloak client-credentials with token caching, single-flight acquisition, and 401 refresh-replay.
 - **Resilience** — exponential backoff + jitter on transient failures, with a per-attempt timeout.
 - **Exact money** — [`shopspring/decimal`](https://github.com/shopspring/decimal), serialized as JSON numbers (never binary floats).
-- **Typed errors** — `*APIError` plus `errors.Is`-friendly sentinels for 400/401/402/404/5xx.
+- **Typed errors** — `*APIError` plus `errors.Is`-friendly sentinels for 400/401/402/404/422/502/5xx, plus reason-code constants.
 - **Context-first** — every call takes `context.Context` for cancellation and deadlines.
 
 ## Install
@@ -190,34 +190,77 @@ of banks, services, party profiles and `Data` fields is the
 ## Errors
 
 Every non-2xx response becomes an `*APIError` carrying `StatusCode`, `Message`
-(the server's `error` field), `Field` (the request field at fault, when the server
-names one), and the raw `ResponseBody`. Classify it with
-`errors.Is` against the sentinels, or unwrap with `errors.As`:
+(the server's `error` field), `Code` (the machine-readable code leading that
+message, e.g. `ErrPaymentRejected`), `Field` (the request field at fault, when the
+server names one), `ServiceID` / `ThirdPartyID` (the downstream service that failed,
+on a `503`), and the raw `ResponseBody`. Classify it with `errors.Is` against the
+sentinels, or unwrap with `errors.As`:
 
 ```go
 _, err := client.Pay(ctx, req, "")
 switch {
-case errors.Is(err, milkyway.ErrValidation):        // 400
-case errors.Is(err, milkyway.ErrAuth):               // 401
-case errors.Is(err, milkyway.ErrExposureBlocked):    // 402
-case errors.Is(err, milkyway.ErrNotFound):           // 404
-case errors.Is(err, milkyway.ErrServiceUnavailable): // 5xx
+case errors.Is(err, milkyway.ErrValidation):         // 400
+case errors.Is(err, milkyway.ErrAuth):                // 401
+case errors.Is(err, milkyway.ErrExposureBlocked):     // 402
+case errors.Is(err, milkyway.ErrNotFound):            // 404
+case errors.Is(err, milkyway.ErrPaymentRejected):     // 422 — receiving bank refused; do not repeat
+case errors.Is(err, milkyway.ErrRecipientBankError):  // 502 — receiving bank's connector failed
+case errors.Is(err, milkyway.ErrServiceUnavailable):  // 5xx (502 included)
 }
 
 var apiErr *milkyway.APIError
 if errors.As(err, &apiErr) {
-	log.Printf("status %d: %s", apiErr.StatusCode, apiErr.Message)
+	log.Printf("status %d (%s): %s", apiErr.StatusCode, apiErr.Code, apiErr.Message)
 }
 ```
 
+- **`422` `ErrPaymentRejected`** (Precheck, Pay) — the receiving bank refused the
+  payment on its merits (a limit, a blocked account). Nothing was created or
+  debited, and repeating the request will not change the answer; the SDK never
+  retries it.
+- **`502` `ErrRecipientBankError`** (Precheck, Pay, Cancel) — the receiving bank's
+  connector failed in a way MilkyWay could not classify. Nothing was created. A
+  `502` matches **both** `ErrRecipientBankError` and `ErrServiceUnavailable`, so
+  existing 5xx handling keeps working; check `ErrRecipientBankError` first if you
+  want to tell it apart.
+- **`503` `ErrServiceUnavailable`** (Precheck, Pay, Cancel) — the receiving bank's
+  service is unreachable; `APIError.ServiceID` and `APIError.ThirdPartyID` name it.
+  Safe to retry once it recovers.
+
 On a field-level `400`, `APIError.Field` names the request field at fault —
-`amount_credit`, or a party field by its path such as `sender_info.date_of_birth`.
+`amount_credit`, `currency_credit`, `recipient_id` (the receiving bank reports the
+recipient invalid, `Code` = `ErrRecipientInvalid`), or a party field by its path
+such as `sender_info.date_of_birth`.
+
+### Reason codes on a terminal status
+
+`PostcheckResult.Error` (also returned by `WaitForCompletion`) carries the code of
+the receiving bank's reason for a terminal outcome — never free text. Compare it
+with the exported constants:
+
+```go
+res, err := client.WaitForCompletion(ctx, txID, nil)
+if err == nil && res.Status == milkyway.StatusFailed {
+	switch res.Error {
+	case milkyway.ReasonRecipientNotFound, milkyway.ReasonRecipientInvalid:
+		// fix the recipient details
+	case milkyway.ReasonServiceUnavailable:
+		// try again later
+	case milkyway.ReasonPaymentRejected:
+		// declined by the receiving bank (also any reason it gave without a code)
+	}
+}
+```
+
+`ReasonPaymentCannotBeCanceled` reports a refused cancellation. The set may grow;
+treat an unknown code like `ReasonPaymentRejected`.
 
 ## Retries & idempotency
 
 Transient failures — HTTP `5xx`, `408`, and network/timeout errors — are retried
 with exponential backoff + jitter, up to `MaxRetries` (default 3). Deterministic
-outcomes (`400/401/402/404`) are **never** retried.
+outcomes (`400/401/402/404/422`) are **never** retried. A `502` is transient and
+is retried like any other `5xx`.
 
 `Pay` is special: **without an `Idempotency-Key` it is not auto-retried**, to avoid
 creating duplicate payments. Pass a non-empty key to make it both idempotent on the

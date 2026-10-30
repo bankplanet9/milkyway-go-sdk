@@ -62,7 +62,7 @@ func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 // retryTransport applies a per-attempt timeout wrapped by exponential-backoff-with-
 // jitter retries on transient failures (HTTP 5xx, 408, and network errors).
-// Deterministic outcomes (400/401/402/404) are never retried, and a request flagged
+// Deterministic outcomes (400/401/402/404/422) are never retried, and a request flagged
 // via withSuppressRetry bypasses retries entirely while keeping the per-attempt timeout.
 type retryTransport struct {
 	next           http.RoundTripper

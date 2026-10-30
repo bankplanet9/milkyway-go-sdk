@@ -308,31 +308,48 @@ func (c *Client) sendForJSON(req *http.Request, out any) error {
 
 // toError maps a non-2xx response to a classified *APIError.
 func toError(status int, body []byte) error {
-	msg, field := extractErrorMessage(body)
+	parsed := parseErrorBody(body)
+	msg := parsed.message
 	if msg == "" {
 		msg = "request failed with status " + strconv.Itoa(status)
 	}
 	apiErr := newAPIError(status, msg, string(body), nil)
-	apiErr.Field = field
+	apiErr.Code = errorCode(parsed.message)
+	apiErr.Field = parsed.field
+	apiErr.ServiceID = parsed.serviceID
+	apiErr.ThirdPartyID = parsed.thirdPartyID
 	return apiErr
 }
 
-// extractErrorMessage pulls the JSON {"error": "...", "field": "..."} message and
-// field, falling back to a trimmed non-JSON body (e.g. a plain-text 500 from
+type errorBody struct {
+	message      string
+	field        string
+	serviceID    string
+	thirdPartyID string
+}
+
+// parseErrorBody pulls the JSON {"error", "field", "service_id", "third_party_id"}
+// members, falling back to a trimmed non-JSON body (e.g. a plain-text 500 from
 // healthcheck) as the message.
-func extractErrorMessage(body []byte) (message, field string) {
+func parseErrorBody(body []byte) errorBody {
 	if len(bytes.TrimSpace(body)) == 0 {
-		return "", ""
+		return errorBody{}
 	}
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(body, &obj); err != nil {
-		return strings.TrimSpace(string(body)), ""
+		return errorBody{message: strings.TrimSpace(string(body))}
 	}
-	if raw, ok := obj["error"]; ok {
-		_ = json.Unmarshal(raw, &message)
+	str := func(key string) string {
+		var v string
+		if raw, ok := obj[key]; ok {
+			_ = json.Unmarshal(raw, &v)
+		}
+		return v
 	}
-	if raw, ok := obj["field"]; ok {
-		_ = json.Unmarshal(raw, &field)
+	return errorBody{
+		message:      str("error"),
+		field:        str("field"),
+		serviceID:    str("service_id"),
+		thirdPartyID: str("third_party_id"),
 	}
-	return message, field
 }

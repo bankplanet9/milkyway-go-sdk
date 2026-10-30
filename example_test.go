@@ -69,6 +69,10 @@ func Example() {
 		switch {
 		case errors.Is(err, milkyway.ErrExposureBlocked):
 			log.Fatal("blocked by exposure limit")
+		case errors.Is(err, milkyway.ErrPaymentRejected):
+			log.Fatal("refused by the receiving bank; do not repeat")
+		case errors.Is(err, milkyway.ErrRecipientBankError):
+			log.Fatal("receiving bank connector failed; retry later or use another service")
 		case errors.As(err, &apiErr):
 			log.Fatalf("API error %d: %s", apiErr.StatusCode, apiErr.Message)
 		default:
@@ -80,6 +84,9 @@ func Example() {
 	result, err := client.WaitForCompletion(ctx, txID, &milkyway.PollOptions{Timeout: 2 * time.Minute})
 	if err != nil {
 		log.Fatal(err)
+	}
+	if result.Status == milkyway.StatusFailed && result.Error == milkyway.ReasonRecipientNotFound {
+		log.Fatal("the receiving bank does not know the recipient")
 	}
 	fmt.Printf("transaction %d: %s\n", result.TransactionID, result.Status)
 }
