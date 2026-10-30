@@ -278,7 +278,11 @@ type PrecheckResult struct {
 type PostcheckResult struct {
 	TransactionID int64             `json:"transaction_id"`
 	Status        TransactionStatus `json:"status"`
-	// Error is failure detail; present only when the payment failed.
+	// Error is the code of the receiving bank's reason for a terminal outcome, when it
+	// gave one: one of the Reason* constants (ReasonPaymentRejected,
+	// ReasonRecipientNotFound, ReasonRecipientInvalid, ReasonServiceUnavailable,
+	// ReasonPaymentCannotBeCanceled) — never the bank's own text. Empty when no
+	// reason was given.
 	Error string `json:"error,omitempty"`
 }
 
