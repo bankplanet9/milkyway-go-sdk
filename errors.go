@@ -14,6 +14,9 @@ type APIError struct {
 	StatusCode int
 	// Message is the parsed server "error" message, or a synthesized description.
 	Message string
+	// Field is the request field at fault on a field-level 400, by its JSON name or
+	// path (e.g. "amount_credit", "sender_info.date_of_birth"); empty otherwise.
+	Field string
 	// ResponseBody is the raw response body, useful for diagnostics.
 	ResponseBody string
 	// Err is an optional wrapped cause (e.g. a JSON parse or network error).
